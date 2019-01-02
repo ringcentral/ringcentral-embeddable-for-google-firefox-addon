@@ -1,6 +1,6 @@
 {
-  "name": "RingCentral Embeddable Voice Demo",
-  "description": "A RingCentral Embeddable Voice extension demo",
+  "name": "RingCentral Embeddable Firefox extension",
+  "description": "RingCentral Embeddable Firefox extension",
   "version": "0.0.1",
   "permissions": [
     "http://*/",
@@ -8,8 +8,6 @@
     "storage",
     "activeTab",
     "tabs",
-    "background",
-    "tabCapture",
     "unlimitedStorage",
     "https://*.office365.com/*",
     "https://*.office.com/*"
@@ -23,10 +21,15 @@
     }
   ],
   "background": {
-    "scripts": ["background.js"],
-    "persistent": true
+    "scripts": ["background.js"]
   },
   "browser_action": {},
-  "content_security_policy": "script-src 'self' https://ringcentral.github.io/ringcentral-embeddable-voice; object-src 'self'",
-  "manifest_version": 2
+  "content_security_policy": "script-src 'self' https://ringcentral.github.io/ringcentral-embeddable; object-src 'self'",
+  "manifest_version": 2,
+  "applications": {
+    "gecko": {
+      "id": "integration-embeddable-firefox@ringcentral.com",
+      "strict_min_version": "60.0"
+    }
+  }
 }

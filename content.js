@@ -102,4 +102,3 @@ window.addEventListener('message', function (e) {
     registerService();
   }
 });
-
