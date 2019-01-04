@@ -8,6 +8,7 @@
 git clone https://github.com/embbnux/ringcentral-embeddable-firefox-extension.git
 ```
 
+1. Add google client id in googleClient file. Need `People, Google Plus, Gmail and Calendar` permission.
 1. Go to Firefox add-ons page `about:debugging#addons`.
 2. Load Temporary Add-on and select this project's `manifest.json`
 3. Go to `https://outlook.office.com/owa/` to check
