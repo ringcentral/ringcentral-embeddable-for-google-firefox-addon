@@ -1,4 +1,4 @@
-const GOOGLE_CLIENT_ID = 'GOOGLE_CLIENT_ID';
+const GOOGLE_CLIENT_ID = '';
 const GOOGLE_REDIRECT_URI = 'https://ringcentral.github.io/ringcentral-embeddable/redirect.html';
 const GOOGLE_SCOPES = [
   'openid',
@@ -32,7 +32,12 @@ class GoogleClient {
     this._userInfo = {};
     this._getTokenPromise = null;
     this._refreshTokenPromise = null;
+    this._syncContactsPromise = null;
     this._tokenStorageKey = '__googleClient.token';
+    this._personalContactsSyncInfoStorageKey = '__googleClient.personalContacts.syncInfo';
+    this._personalContactsStorageKey = '__googleClient.personalContacts.data';
+    this._directoryContactsStorageKey = '__googleClient.directoryContacts.data';
+    this._directoryContactsSyncInfoStorageKey = '__googleClient.directoryContacts.syncInfo';
     this._init();
   }
 
@@ -42,6 +47,9 @@ class GoogleClient {
     }
     await this._getTokenPromise;
     this._getTokenPromise = null;
+    if (this._token && this._token.accessToken) {
+      await this.syncContacts();
+    }
   }
 
   async getToken() {
@@ -57,6 +65,21 @@ class GoogleClient {
       this._token = token;
     }
     this.setUserInfo();
+  }
+
+  async _getDataFromStorage(key) {
+    const data = await browser.storage.local.get(key);
+    return data[key] || null;
+  }
+
+  async _setDataIntoStorage(key, value) {
+    await browser.storage.local.set({
+      [key]: value,
+    });
+  }
+
+  async _setDatasIntoStorage(keyValueObject) {
+    await browser.storage.local.set(keyValueObject);
   }
 
   async authorize(interactive = true) {
@@ -78,11 +101,8 @@ class GoogleClient {
         tokenType: params.get('token_type'),
         scope: params.get('scope'),
       };
-      await browser.storage.local.set({
-        [this._tokenStorageKey]: this._token,
-      });
+      await this._setDataIntoStorage(this._tokenStorageKey, this._token);
       console.log('Authorize with google successfully.');
-      this.setUserInfo();
     } catch (e) {
       this._token = {};
       console.error('Authorize with google failed.', e);
@@ -92,9 +112,7 @@ class GoogleClient {
   async unAuthorize() {
     const token = this._token.accessToken;
     this._token = {};
-    await browser.storage.local.set({
-      [this._tokenStorageKey]: {},
-    });
+    await this._setDataIntoStorage(this._tokenStorageKey, {});
     await fetch(`https://accounts.google.com/o/oauth2/revoke?token=${token}`, {
       method: 'POST',
       headers: {
@@ -156,20 +174,16 @@ class GoogleClient {
 
   async setUserInfo() {
     const response = await this.fetch({
-      url: 'https://www.googleapis.com/plus/v1/people/me',
+      url: 'https://www.googleapis.com/userinfo/v2/me',
     });
-    if (response.emails && response.emails.length > 0) {
-      const primaryEmail = response.emails.find(email => email.type === 'account');
-      if (primaryEmail) {
-        this._userInfo = {
-          ...response,
-          email: primaryEmail.value,
-        };
-      }
+    if (!response) {
+      this._userInfo = {}
+      return;
     }
+    this._userInfo = response;
   }
 
-  async queryContacts({ pageToken, syncToken } = {}) {
+  async queryPersonalContacts({ pageToken, syncToken } = {}) {
     const params = {
       personFields: "names,emailAddresses,phoneNumbers",
       pageSize: 200,
@@ -184,9 +198,211 @@ class GoogleClient {
     const result = await this.fetch({
       url: 'https://people.googleapis.com/v1/people/me/connections',
       params
-    })
+    });
+    return result;
+  }
+
+  async _queryFullPersonalContacts({ syncToken, pageToken } = {}) {
+    const response = await this.queryPersonalContacts({ pageToken, syncToken });
+    if (!response.nextPageToken) {
+      return {
+        connections: response.connections || [],
+        nextSyncToken: response.nextSyncToken,
+      };
+    }
+    const nextResponse = await this._queryFullPersonalContacts({ pageToken: response.nextPageToken, syncToken });
+    const connections = response.connections || [];
+    return {
+      connections: connections.concat(nextResponse.connections || []),
+      nextSyncToken: response.nextSyncToken,
+    }
+  }
+
+  async _syncPersonalContacts() {
+    try {
+      const syncInfo = await this._getDataFromStorage(this._personalContactsSyncInfoStorageKey);
+      const syncToken = syncInfo && syncInfo.syncToken;
+      const response = await this._queryFullPersonalContacts({ syncToken });
+      const oldContacts = await this._getDataFromStorage(this._personalContactsStorageKey) || [];
+      const updatedContacts = [];
+      const updatesContactIds = {};
+      response.connections.forEach((c) => {
+        const id = c.resourceName.replace('people/', '')
+        updatedContacts.push(({
+          id,
+          name: (c.names[0] && c.names[0].displayName) || '',
+          type: 'Google', // need to same as service name
+          phoneNumbers:
+            (c.phoneNumbers && c.phoneNumbers.map(p => ({ phoneNumber: p.value, phoneType: p.type }))) ||
+            [],
+          emails: (c.emailAddresses && c.emailAddresses.map(c => c.value)) || [],
+        }));
+        updatesContactIds[id] = 1;
+      })
+      await this._setDatasIntoStorage({
+        [this._personalContactsSyncInfoStorageKey]: {
+          syncToken: response.nextSyncToken,
+          syncTimestamp: Date.now(),
+        },
+        [this._personalContactsStorageKey]:
+          (oldContacts.filter(c => !updatesContactIds[c.id])).concat(updatedContacts),
+      });
+    } catch(e) {
+      console.error('sync personal contacts failed', e);
+      throw(e);
+    }
+  }
+
+  async queryDirectoryContacts({pageToken } = {}) {
+    const params = {
+      showdeleted: 'false',
+      maxResults: 500,
+      orderBy: 'email',
+      projection: 'full',
+      sortOrder: 'ASCENDING',
+      viewType: 'domain_public',
+      customer: 'my_customer',
+    };
+    if (pageToken) {
+      params.pageToken = pageToken;
+    }
+    const result = await this.fetch({
+      url: 'https://www.googleapis.com/admin/directory/v1/users',
+      params
+    });
     console.log(result);
     return result;
+  }
+
+  async _queryFullDirectoryContacts({ pageToken } = {}) {
+    const response = await this.queryDirectoryContacts({ pageToken });
+    if (!response.nextPageToken) {
+      return response;
+    }
+    const nextResponse = await this._queryFullDirectoryContacts({ pageToken: response.nextPageToken });
+    const users = response.users || [];
+    return {
+      users: users.concat(nextResponse.users || []),
+      kind: response.kind,
+      etag: response.etag,
+    };
+  }
+
+  async _syncDirectoryContacts() {
+    if (!this._userInfo.hd) {
+      return null;
+    }
+    try {
+      const response = await this._queryFullDirectoryContacts();
+      await this._setDatasIntoStorage({
+        [this._directoryContactsStorageKey]: response.users.map((c) => ({
+          id: c.id,
+          name: (c.name && c.name.fullName) || '',
+          type: 'Google', // need to same as service name
+          phoneNumbers:
+            (c.phones && c.phones.map(p => ({ phoneNumber: p.value, phoneType: p.type }))) ||
+            [],
+          emails: (c.emails && c.emails.map(c => c.address)) || [],
+        })),
+        [this._directoryContactsSyncInfoStorageKey]: {
+          syncTimestamp: Date.now(),
+        },
+      });
+    } catch (e) {
+      console.error('sync directory contacts failed', e);
+      throw(e);
+    }
+  }
+
+  async _syncContacts({ force = false }) {
+    const personalContactSyncInfo = await this._getDataFromStorage(this._personalContactsSyncInfoStorageKey);
+    const personalSyncTimestamp = personalContactSyncInfo && personalContactSyncInfo.syncTimestamp;
+    if (force || personalSyncTimestamp + 30 * 1000 < Date.now()) {
+      await this._syncPersonalContacts();
+    }
+    const directoryContactsSyncInfo = await this._getDataFromStorage(this._directoryContactsSyncInfoStorageKey);
+    const directorySyncTimestamp = directoryContactsSyncInfo && directoryContactsSyncInfo.syncTimestamp;
+    if (force || directorySyncTimestamp + 5 * 60 * 1000 < Date.now()) {
+      await this._syncDirectoryContacts();
+    }
+  }
+
+  async getContactSyncTimestamp() {
+    
+    if (!personalSyncTimestamp || !directorySyncTimestamp) {
+      return null;
+    }
+    return personalSyncTimestamp > directorySyncTimestamp ? personalSyncTimestamp : directorySyncTimestamp;
+  }
+
+  async syncContacts({ force = false } = {}) {
+    if (this._syncContactsPromise) {
+      await this._syncContactsPromise;
+      return;
+    }
+    this._syncContactsPromise = this._syncContacts({ force });
+    await this._syncContactsPromise;
+    this._syncContactsPromise = null;
+  }
+
+  async queryContacts({ syncTimestamp }) {
+    await this.syncContacts();
+    const personalContactSyncInfo = await this._getDataFromStorage(this._personalContactsSyncInfoStorageKey);
+    const personalSyncTimestamp = personalContactSyncInfo && personalContactSyncInfo.syncTimestamp;
+    const directoryContactsSyncInfo = await this._getDataFromStorage(this._directoryContactsSyncInfoStorageKey);
+    const directorySyncTimestamp = directoryContactsSyncInfo && directoryContactsSyncInfo.syncTimestamp;
+    const personalContacts = (await this._getDataFromStorage(this._personalContactsStorageKey)) || [];
+    const directoryContacts = (await this._getDataFromStorage(this._directoryContactsStorageKey)) || [];
+    if (!syncTimestamp) {
+      return {
+        contacts: directoryContacts.concat(personalContacts),
+        syncTimestamp: Date.now(),
+      };
+    }
+    if (syncTimestamp >= personalSyncTimestamp && syncTimestamp >= directorySyncTimestamp) {
+      return {
+        contacts: [],
+        syncTimestamp: Date.now(),
+      };
+    }
+    if (syncTimestamp < personalSyncTimestamp && syncTimestamp >= directorySyncTimestamp) {
+      return {
+        contacts: personalContacts,
+        syncTimestamp: Date.now(),
+      };
+    }
+    if (syncTimestamp >= personalSyncTimestamp && syncTimestamp < directorySyncTimestamp) {
+      return {
+        contacts: directoryContacts,
+        syncTimestamp: Date.now(),
+      };
+    }
+    return {
+      contacts: directoryContacts.concat(personalContacts),
+      syncTimestamp: Date.now(),
+    };
+  }
+
+  async searchContacts({ searchString }) {
+    const personalContacts = (await this._getDataFromStorage(this._personalContactsStorageKey)) || [];
+    const directoryContacts = (await this._getDataFromStorage(this._directoryContactsStorageKey)) || [];
+    const contacts = personalContacts.concat(directoryContacts);
+    const cleanSearchString = searchString.toLocaleLowerCase();
+    const cleanSearchDigit = searchString.replace(/[^\d+]/g, '');
+    const result = contacts.filter((c) => {
+      const name = c.name.toLocaleLowerCase();
+      if (name.indexOf(cleanSearchString) > -1) {
+        return true;
+      }
+      const phoneNumbers = c.phoneNumbers.join('').replace(/[^\d+]/g, '');;
+      if (cleanSearchDigit.length > 2 && phoneNumbers.indexOf(cleanSearchDigit) > -1) {
+        return true;
+      }
+      return false;
+    });
+    return {
+      data: result,
+    }
   }
 
   async createCalendarEvent(event) {

@@ -1,32 +1,46 @@
-let newWindow;
+function isFloatingWindowInjected(url) {
+  if (!url) {
+    return false;
+  }
+  if (url.indexOf('www.google.com/contacts') > -1) {
+    return true;
+  }
+  if (url.indexOf('calendar.google.com') > -1) {
+    return true;
+  }
+  if (url.indexOf('mail.google.com') > -1) {
+    return true;
+  }
+  return false;
+}
+
+let standalongWindow;
 chrome.browserAction.onClicked.addListener(function (tab) {
   // open float app window when click icon in office page
-  if (tab && tab.url && tab.url.indexOf('google.com') > -1) {
+  if (isFloatingWindowInjected(tab && tab.url)) {
     // send message to content.js to to open app window.
-    chrome.tabs.sendMessage(tab.id, { action: 'openAppWindow' }, function(response) {
-      console.log(response);
-    });
+    chrome.tabs.sendMessage(tab.id, { action: 'openAppWindow' });
     return;
   }
   // open standalong app window when click icon
-  if (!newWindow) {
+  if (!standalongWindow) {
     chrome.windows.create({
       url: './standalong.html',
       type: 'popup',
       width: 300,
       height: 536
     }, function (wind) {
-      newWindow = wind;
+      standalongWindow = wind;
     });
   } else {
-    chrome.windows.update(newWindow.id, {
+    chrome.windows.update(standalongWindow.id, {
       focused: true,
     });
   }
 });
 chrome.windows.onRemoved.addListener(function (id) {
-  if (newWindow && newWindow.id === id) {
-    newWindow = null;
+  if (standalongWindow && standalongWindow.id === id) {
+    standalongWindow = null;
   }
 });
 
@@ -37,29 +51,31 @@ async function onAuthorize(authorized) {
     await window.googleClient.unAuthorize();
   }
   const newAuthorized = await window.googleClient.checkAuthorize();
+  if (newAuthorized) {
+    window.googleClient.setUserInfo();
+  }
   chrome.runtime.sendMessage(
     { action: 'authorizeStatusChanged', authorized: newAuthorized }
   );
 }
 
 async function onGetContacts(request, sendResponse) {
-  const pageToken = request.body.page === 1 ? null : request.body.page;
-  const syncToken = request.body.syncTimestamp;
-  const response = await window.googleClient.queryContacts({ pageToken, syncToken });
-  const contacts = response.connections || [];
+  const syncTimestamp = request.body.syncTimestamp;
+  const response = await window.googleClient.queryContacts({ syncTimestamp });
   sendResponse({
-    data: contacts.map((c) => ({
-      id: c.resourceName.replace('people/', ''),
-      name: c.names[0] && c.names[0].displayName,
-      type: 'Google', // need to same as service name
-      phoneNumbers:
-        (c.phoneNumbers && c.phoneNumbers.map(p => ({ phoneNumber: p.value, phoneType: p.type }))) ||
-        [],
-      emails: (c.emailAddresses && c.emailAddresses.map(c => c.value)) || [],
-    })),
-    nextPage: response.nextPageToken,
-    syncTimestamp: response.nextSyncToken,
+    data: response.contacts,
+    syncTimestamp: response.syncTimestamp,
   })
+}
+
+async function onContactSearch(request, sendResponse) {
+  console.log('search', request);
+  const response = await window.googleClient.searchContacts({
+    searchString: request.body.searchString,
+  });
+  sendResponse({
+    data: response.data,
+  });
 }
 
 async function registerService(sendResponse) {
@@ -73,6 +89,7 @@ async function registerService(sendResponse) {
       unauthorizedTitle: 'Authorize',
       authorized,
       contactsPath: '/contacts',
+      contactSearchPath: '/contacts/search',
       conferenceInvitePath: '/conference/invite',
       conferenceInviteTitle: 'Invite with Google Calendar',
       activitiesPath: '/activities',
@@ -131,6 +148,9 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     }
     if (request.path === '/activity') {
       openGmailPage(request, sendResponse);
+    }
+    if (request.path === '/contacts/search') {
+      onContactSearch(request, sendResponse);
     }
     return true;
   }
