@@ -317,22 +317,16 @@ class GoogleClient {
   async _syncContacts({ force = false }) {
     const personalContactSyncInfo = await this._getDataFromStorage(this._personalContactsSyncInfoStorageKey);
     const personalSyncTimestamp = personalContactSyncInfo && personalContactSyncInfo.syncTimestamp;
+    // cache personal contacts 30s
     if (force || personalSyncTimestamp + 30 * 1000 < Date.now()) {
       await this._syncPersonalContacts();
     }
     const directoryContactsSyncInfo = await this._getDataFromStorage(this._directoryContactsSyncInfoStorageKey);
     const directorySyncTimestamp = directoryContactsSyncInfo && directoryContactsSyncInfo.syncTimestamp;
-    if (force || directorySyncTimestamp + 5 * 60 * 1000 < Date.now()) {
+    // cache directory in a hour
+    if (force || directorySyncTimestamp + 60 * 60 * 1000 < Date.now()) {
       await this._syncDirectoryContacts();
     }
-  }
-
-  async getContactSyncTimestamp() {
-    
-    if (!personalSyncTimestamp || !directorySyncTimestamp) {
-      return null;
-    }
-    return personalSyncTimestamp > directorySyncTimestamp ? personalSyncTimestamp : directorySyncTimestamp;
   }
 
   async syncContacts({ force = false } = {}) {
@@ -346,10 +340,16 @@ class GoogleClient {
   }
 
   async queryContacts({ syncTimestamp }) {
-    await this.syncContacts();
-    const personalContactSyncInfo = await this._getDataFromStorage(this._personalContactsSyncInfoStorageKey);
+    let personalContactSyncInfo = await this._getDataFromStorage(this._personalContactsSyncInfoStorageKey);
+    let directoryContactsSyncInfo = await this._getDataFromStorage(this._directoryContactsSyncInfoStorageKey);
+    if (!personalContactSyncInfo || !directoryContactsSyncInfo) {
+      await this.syncContacts();
+      personalContactSyncInfo = await this._getDataFromStorage(this._personalContactsSyncInfoStorageKey);
+      directoryContactsSyncInfo = await this._getDataFromStorage(this._directoryContactsSyncInfoStorageKey);
+    } else {
+      this.syncContacts();
+    }
     const personalSyncTimestamp = personalContactSyncInfo && personalContactSyncInfo.syncTimestamp;
-    const directoryContactsSyncInfo = await this._getDataFromStorage(this._directoryContactsSyncInfoStorageKey);
     const directorySyncTimestamp = directoryContactsSyncInfo && directoryContactsSyncInfo.syncTimestamp;
     const personalContacts = (await this._getDataFromStorage(this._personalContactsStorageKey)) || [];
     const directoryContacts = (await this._getDataFromStorage(this._directoryContactsStorageKey)) || [];
@@ -383,10 +383,24 @@ class GoogleClient {
     };
   }
 
-  async searchContacts({ searchString }) {
+  async getAllContactsFromStorage() {
     const personalContacts = (await this._getDataFromStorage(this._personalContactsStorageKey)) || [];
     const directoryContacts = (await this._getDataFromStorage(this._directoryContactsStorageKey)) || [];
     const contacts = personalContacts.concat(directoryContacts);
+    return contacts;
+  }
+
+  async _checkDataReady() {
+    const personalContactSyncInfo = await this._getDataFromStorage(this._personalContactsSyncInfoStorageKey);
+    const directoryContactsSyncInfo = await this._getDataFromStorage(this._directoryContactsSyncInfoStorageKey);
+    if (this._syncContactsPromise && (!personalContactSyncInfo || !directoryContactsSyncInfo)) {
+      await this._syncContactsPromise;
+    }
+  }
+
+  async searchContacts({ searchString }) {
+    await this._checkDataReady();
+    const contacts = await this.getAllContactsFromStorage();
     const cleanSearchString = searchString.toLocaleLowerCase();
     const cleanSearchDigit = searchString.replace(/[^\d+]/g, '');
     const result = contacts.filter((c) => {
@@ -394,7 +408,7 @@ class GoogleClient {
       if (name.indexOf(cleanSearchString) > -1) {
         return true;
       }
-      const phoneNumbers = c.phoneNumbers.join('').replace(/[^\d+]/g, '');;
+      const phoneNumbers = c.phoneNumbers.join('').replace(/[^\d+]/g, '');
       if (cleanSearchDigit.length > 2 && phoneNumbers.indexOf(cleanSearchDigit) > -1) {
         return true;
       }
@@ -403,6 +417,31 @@ class GoogleClient {
     return {
       data: result,
     }
+  }
+
+  async matchContacts({ phoneNumbers }) {
+    await this._checkDataReady();
+    const contacts = await this.getAllContactsFromStorage();
+    const matchedPhoneNumberMap = {};
+    const cleanedPhoneNumberMap = {};
+    phoneNumbers.forEach((phoneNumber) => {
+      matchedPhoneNumberMap[phoneNumber] = [];
+      cleanedPhoneNumberMap[phoneNumber.replace(/[^\d]/g, '')] = phoneNumber;
+    });
+    contacts.forEach((contact) => {
+      const contactPhoneNumbers = contact.phoneNumbers.map((p) => {
+        const cleanPhoneNumber = p.phoneNumber.replace(/[^\d]/g, '');
+        return cleanPhoneNumber;
+      });
+      const matchedPhoneNumber = contactPhoneNumbers.find((p) => cleanedPhoneNumberMap[p]);
+      if (matchedPhoneNumber) {
+        const phoneNumber = cleanedPhoneNumberMap[matchedPhoneNumber];
+        matchedPhoneNumberMap[phoneNumber].push(contact);
+      }
+    });
+    return {
+      data: matchedPhoneNumberMap,
+    };
   }
 
   async createCalendarEvent(event) {

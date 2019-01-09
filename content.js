@@ -56,29 +56,39 @@ window.addEventListener('message', (e) => {
   });
 });
 
-// Listen message from background.js to open app window when user click icon.
-chrome.runtime.onMessage.addListener(
-  function(request, sender, sendResponse) {
-    console.log(request);
-    if (request.action === 'openAppWindow') {
-      console.log('opening window');
-      // set app window minimized to false
-      window.postMessage({
-        type: 'rc-adapter-syncMinimized',
-        minimized: false,
-      }, '*');
+// Listen message from background using storage event
+browser.storage.onChanged.addListener(function (changes, namespace) {
+  if (namespace != 'local') {
+    return;
+  }
+  const messageData = changes['__StorageTransportMessageKey'];
+  if (!messageData || !messageData.newValue) {
+    return;
+  }
+  const { setter, value } = messageData.newValue;
+  if (!setter || setter != 'background') {
+    return;
+  }
+  const request = value;
+  if (request.action === 'openAppWindow') {
+    console.log('opening window');
+    // set app window minimized to false
+    window.postMessage({
+      type: 'rc-adapter-syncMinimized',
+      minimized: false,
+    }, '*');
+    if (window.document.visibilityState === 'visible') {
       //sync to widget
       postMessageToWidget({
         type: 'rc-adapter-syncMinimized',
         minimized: false,
       });
     }
-    if (request.action === 'authorizeStatusChanged') {
-      postMessageToWidget({
-        type: 'rc-adapter-update-authorization-status',
-        authorized: request.authorized,
-      });
-    }
-    sendResponse('ok');
   }
-);
+  if (request.action === 'authorizeStatusChanged') {
+    postMessageToWidget({
+      type: 'rc-adapter-update-authorization-status',
+      authorized: request.authorized,
+    });
+  }
+});

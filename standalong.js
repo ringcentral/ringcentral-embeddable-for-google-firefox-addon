@@ -49,16 +49,25 @@ window.addEventListener('message', (e) => {
   });
 });
 
-// Listen message from background.js and pass to widget
-chrome.runtime.onMessage.addListener(
-  function(request, sender, sendResponse) {
-    console.log(request);
-    if (request.action === 'authorizeStatusChanged') {
-      postMessageToWidget({
-        type: 'rc-adapter-update-authorization-status',
-        authorized: request.authorized,
-      });
-    }
-    sendResponse('ok');
+
+// Listen message from background using storage event
+browser.storage.onChanged.addListener(function (changes, namespace) {
+  if (namespace != 'local') {
+    return;
   }
-);
+  const messageData = changes['__StorageTransportMessageKey'];
+  if (!messageData || !messageData.newValue) {
+    return;
+  }
+  const { setter, value } = messageData.newValue;
+  if (!setter || setter != 'background') {
+    return;
+  }
+  const request = value;
+  if (request.action === 'authorizeStatusChanged') {
+    postMessageToWidget({
+      type: 'rc-adapter-update-authorization-status',
+      authorized: request.authorized,
+    });
+  }
+});

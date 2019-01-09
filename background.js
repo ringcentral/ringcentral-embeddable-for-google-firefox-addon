@@ -14,12 +14,23 @@ function isFloatingWindowInjected(url) {
   return false;
 }
 
+async function sendMessageToContentAndStandalong(message) {
+  const key = '__StorageTransportMessageKey';
+  await browser.storage.local.set({
+    [key]: {
+      setter: 'background',
+      value: message,
+    }
+  });
+  await browser.storage.local.remove(key);
+}
+
 let standalongWindow;
 chrome.browserAction.onClicked.addListener(function (tab) {
   // open float app window when click icon in office page
   if (isFloatingWindowInjected(tab && tab.url)) {
     // send message to content.js to to open app window.
-    chrome.tabs.sendMessage(tab.id, { action: 'openAppWindow' });
+    sendMessageToContentAndStandalong({ action: 'openAppWindow' });
     return;
   }
   // open standalong app window when click icon
@@ -53,8 +64,9 @@ async function onAuthorize(authorized) {
   const newAuthorized = await window.googleClient.checkAuthorize();
   if (newAuthorized) {
     window.googleClient.setUserInfo();
+    window.googleClient.syncContacts();
   }
-  chrome.runtime.sendMessage(
+  await sendMessageToContentAndStandalong(
     { action: 'authorizeStatusChanged', authorized: newAuthorized }
   );
 }
@@ -69,9 +81,17 @@ async function onGetContacts(request, sendResponse) {
 }
 
 async function onContactSearch(request, sendResponse) {
-  console.log('search', request);
   const response = await window.googleClient.searchContacts({
     searchString: request.body.searchString,
+  });
+  sendResponse({
+    data: response.data,
+  });
+}
+
+async function onContactMatch(request, sendResponse) {
+  const response = await window.googleClient.matchContacts({
+    phoneNumbers: request.body.phoneNumbers,
   });
   sendResponse({
     data: response.data,
@@ -90,6 +110,7 @@ async function registerService(sendResponse) {
       authorized,
       contactsPath: '/contacts',
       contactSearchPath: '/contacts/search',
+      contactMatchPath: '/contacts/match',
       conferenceInvitePath: '/conference/invite',
       conferenceInviteTitle: 'Invite with Google Calendar',
       activitiesPath: '/activities',
@@ -151,6 +172,9 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     }
     if (request.path === '/contacts/search') {
       onContactSearch(request, sendResponse);
+    }
+    if (request.path === '/contacts/match') {
+      onContactMatch(request, sendResponse);
     }
     return true;
   }
