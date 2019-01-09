@@ -14,9 +14,14 @@
   ],
   "content_scripts": [
     {
-      "matches": ["https://www.google.com/contacts/*", "https://calendar.google.com/*", "https://mail.google.com/*"],
+      "matches": ["https://www.google.com/contacts/*", "https://contacts.google.com/*", "https://calendar.google.com/*", "https://mail.google.com/*"],
       "js": [
-        "./content.js"
+        "vendors/libphonenumber-js.min.js",
+        "clickToDial.js",
+        "content.js"
+      ],
+      "css": [
+        "clickToDial.css"
       ]
     }
   ],

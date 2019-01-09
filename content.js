@@ -19,6 +19,21 @@ function responseMessageToWidget(request, response) {
   });
 }
 
+function openFloatingWindow() {
+  // set app window minimized to false
+  window.postMessage({
+    type: 'rc-adapter-syncMinimized',
+    minimized: false,
+  }, '*');
+  if (window.document.visibilityState === 'visible') {
+    //sync to widget
+    postMessageToWidget({
+      type: 'rc-adapter-syncMinimized',
+      minimized: false,
+    });
+  }
+}
+
 function inviteConference(request) {
   responseMessageToWidget(request, { data: 'ok' });
 }
@@ -71,19 +86,7 @@ browser.storage.onChanged.addListener(function (changes, namespace) {
   }
   const request = value;
   if (request.action === 'openAppWindow') {
-    console.log('opening window');
-    // set app window minimized to false
-    window.postMessage({
-      type: 'rc-adapter-syncMinimized',
-      minimized: false,
-    }, '*');
-    if (window.document.visibilityState === 'visible') {
-      //sync to widget
-      postMessageToWidget({
-        type: 'rc-adapter-syncMinimized',
-        minimized: false,
-      });
-    }
+    openFloatingWindow();
   }
   if (request.action === 'authorizeStatusChanged') {
     postMessageToWidget({
@@ -91,4 +94,22 @@ browser.storage.onChanged.addListener(function (changes, namespace) {
       authorized: request.authorized,
     });
   }
+});
+
+const clickToDialInject = new window.ClickToDialInject({
+  onCallClick: (phoneNumber) => {
+    openFloatingWindow();
+    postMessageToWidget({
+      type: 'rc-adapter-new-call',
+      phoneNumber,
+      toCall: true,
+    });
+  },
+  onSmsClick: (phoneNumber) => {
+    openFloatingWindow();
+    postMessageToWidget({
+      type: 'rc-adapter-new-sms',
+      phoneNumber,
+    });
+  },
 });
