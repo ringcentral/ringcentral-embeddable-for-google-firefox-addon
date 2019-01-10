@@ -49,7 +49,7 @@ class Background {
           type: 'popup',
           width: 300,
           height: 536
-        }, function (wind) {
+        }, (wind) => {
           this._standalongWindow = wind;
         });
       } else {
