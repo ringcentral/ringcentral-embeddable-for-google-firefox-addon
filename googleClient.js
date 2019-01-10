@@ -512,4 +512,4 @@ class GoogleClient {
   }
 }
 
-window.googleClient = new GoogleClient();
+window.GoogleClient = GoogleClient;

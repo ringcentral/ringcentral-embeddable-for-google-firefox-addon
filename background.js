@@ -25,157 +25,175 @@ async function sendMessageToContentAndStandalong(message) {
   await browser.storage.local.remove(key);
 }
 
-let standalongWindow;
-chrome.browserAction.onClicked.addListener(function (tab) {
-  // open float app window when click icon in office page
-  if (isFloatingWindowInjected(tab && tab.url)) {
-    // send message to content.js to to open app window.
-    sendMessageToContentAndStandalong({ action: 'openAppWindow' });
-    return;
+class Background {
+  constructor() {
+    this._googleClient = new window.GoogleClient();
+    this._standalongWindow = null;
+    this._addExtensionIconClickedListener();
+    this._addStandalongWindowClosedEvent();
+    this._initMessageResponseService();
   }
-  // open standalong app window when click icon
-  if (!standalongWindow) {
-    chrome.windows.create({
-      url: './standalong.html',
-      type: 'popup',
-      width: 300,
-      height: 536
-    }, function (wind) {
-      standalongWindow = wind;
+
+  _addExtensionIconClickedListener() {
+    chrome.browserAction.onClicked.addListener((tab) => {
+      // open float app window when click icon in office page
+      if (isFloatingWindowInjected(tab && tab.url)) {
+        // send message to content.js to to open app window.
+        sendMessageToContentAndStandalong({ action: 'openAppWindow' });
+        return;
+      }
+      // open standalong app window when click icon
+      if (!this._standalongWindow) {
+        chrome.windows.create({
+          url: './standalong.html',
+          type: 'popup',
+          width: 300,
+          height: 536
+        }, function (wind) {
+          this._standalongWindow = wind;
+        });
+      } else {
+        chrome.windows.update(this._standalongWindow.id, {
+          focused: true,
+        });
+      }
     });
-  } else {
-    chrome.windows.update(standalongWindow.id, {
-      focused: true,
+  }
+
+  _addStandalongWindowClosedEvent() {
+    chrome.windows.onRemoved.addListener((id) => {
+      if (this._standalongWindow && this._standalongWindow.id === id) {
+        this._standalongWindow = null;
+      }
     });
   }
-});
-chrome.windows.onRemoved.addListener(function (id) {
-  if (standalongWindow && standalongWindow.id === id) {
-    standalongWindow = null;
+
+  _initMessageResponseService() {
+    // Listen message from content and standalong to response
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      if (request.type === 'rc-register-service') {
+        this.registerService(sendResponse)
+        return true;
+      }
+      if (request.type === 'rc-post-message-request') {
+        if (request.path === '/authorize') {
+          this.onAuthorize(request.body.authorized);
+          sendResponse({ data: 'ok' });
+        }
+        if (request.path === '/contacts') {
+          this.onGetContacts(request, sendResponse);
+        }
+        if (request.path === '/conference/invite') {
+          this.createCalendarEvent(request, sendResponse);
+        }
+        if (request.path === '/activities') {
+          this.getContactGmails(request, sendResponse);
+        }
+        if (request.path === '/activity') {
+          this.openGmailPage(request, sendResponse);
+        }
+        if (request.path === '/contacts/search') {
+          this.onContactSearch(request, sendResponse);
+        }
+        if (request.path === '/contacts/match') {
+          this.onContactMatch(request, sendResponse);
+        }
+        return true;
+      }
+    });
   }
-});
 
-async function onAuthorize(authorized) {
-  if (!authorized) {
-    await window.googleClient.authorize();
-  } else {
-    await window.googleClient.unAuthorize();
+  async onAuthorize(authorized) {
+    if (!authorized) {
+      await this._googleClient.authorize();
+    } else {
+      await this._googleClient.unAuthorize();
+    }
+    const newAuthorized = await this._googleClient.checkAuthorize();
+    if (newAuthorized) {
+      this._googleClient.setUserInfo();
+      this._googleClient.syncContacts();
+    }
+    await sendMessageToContentAndStandalong(
+      { action: 'authorizeStatusChanged', authorized: newAuthorized }
+    );
   }
-  const newAuthorized = await window.googleClient.checkAuthorize();
-  if (newAuthorized) {
-    window.googleClient.setUserInfo();
-    window.googleClient.syncContacts();
+
+  async onGetContacts(request, sendResponse) {
+    const syncTimestamp = request.body.syncTimestamp;
+    const response = await this._googleClient.queryContacts({ syncTimestamp });
+    sendResponse({
+      data: response.contacts,
+      syncTimestamp: response.syncTimestamp,
+    })
   }
-  await sendMessageToContentAndStandalong(
-    { action: 'authorizeStatusChanged', authorized: newAuthorized }
-  );
-}
 
-async function onGetContacts(request, sendResponse) {
-  const syncTimestamp = request.body.syncTimestamp;
-  const response = await window.googleClient.queryContacts({ syncTimestamp });
-  sendResponse({
-    data: response.contacts,
-    syncTimestamp: response.syncTimestamp,
-  })
-}
-
-async function onContactSearch(request, sendResponse) {
-  const response = await window.googleClient.searchContacts({
-    searchString: request.body.searchString,
-  });
-  sendResponse({
-    data: response.data,
-  });
-}
-
-async function onContactMatch(request, sendResponse) {
-  const response = await window.googleClient.matchContacts({
-    phoneNumbers: request.body.phoneNumbers,
-  });
-  sendResponse({
-    data: response.data,
-  });
-}
-
-async function registerService(sendResponse) {
-  const authorized = await window.googleClient.checkAuthorize();
-  sendResponse({
-    action: 'registerService',
-    service: {
-      name: 'Google',
-      authorizationPath: '/authorize',
-      authorizedTitle: 'Unauthorize',
-      unauthorizedTitle: 'Authorize',
-      authorized,
-      contactsPath: '/contacts',
-      contactSearchPath: '/contacts/search',
-      contactMatchPath: '/contacts/match',
-      conferenceInvitePath: '/conference/invite',
-      conferenceInviteTitle: 'Invite with Google Calendar',
-      activitiesPath: '/activities',
-      activityPath: '/activity'
-    }
-  });
-}
-
-async function createCalendarEvent(request, sendResponse) {
-  const timeFrom = new Date();
-  const timeTo = new Date(Date.now()+ 3600 * 1000);
-  const event = {
-    topic: 'New Conference',
-    details: request.body.conference.inviteText,
-    timeFrom: timeFrom.toISOString(),
-    timeTo: timeTo.toISOString(),
+  async onContactSearch(request, sendResponse) {
+    const response = await this._googleClient.searchContacts({
+      searchString: request.body.searchString,
+    });
+    sendResponse({
+      data: response.data,
+    });
   }
-  const response = await window.googleClient.createCalendarEvent(event);
-  sendResponse(response);
+
+  async onContactMatch(request, sendResponse) {
+    const response = await this._googleClient.matchContacts({
+      phoneNumbers: request.body.phoneNumbers,
+    });
+    sendResponse({
+      data: response.data,
+    });
+  }
+
+  async registerService(sendResponse) {
+    const authorized = await this._googleClient.checkAuthorize();
+    sendResponse({
+      action: 'registerService',
+      service: {
+        name: 'Google',
+        authorizationPath: '/authorize',
+        authorizedTitle: 'Unauthorize',
+        unauthorizedTitle: 'Authorize',
+        authorized,
+        contactsPath: '/contacts',
+        contactSearchPath: '/contacts/search',
+        contactMatchPath: '/contacts/match',
+        conferenceInvitePath: '/conference/invite',
+        conferenceInviteTitle: 'Invite with Google Calendar',
+        activitiesPath: '/activities',
+        activityPath: '/activity'
+      }
+    });
+  }
+
+  async createCalendarEvent(request, sendResponse) {
+    const timeFrom = new Date();
+    const timeTo = new Date(Date.now()+ 3600 * 1000);
+    const event = {
+      topic: 'New Conference',
+      details: request.body.conference.inviteText,
+      timeFrom: timeFrom.toISOString(),
+      timeTo: timeTo.toISOString(),
+    }
+    const response = await this._googleClient.createCalendarEvent(event);
+    sendResponse(response);
+  }
+  
+  async getContactGmails(request, sendResponse) {
+    if (request.body.contact.emails && request.body.contact.emails.length > 0) {
+      const response = await this._googleClient.getGmails(request.body.contact.emails);
+      sendResponse({ data: response })
+      return;
+    }
+    sendResponse({ data: [] });
+  }
+  
+  openGmailPage(request, sendResponse) {
+    const url = this._googleClient.getGmailUri(request.body.activity.id);
+    chrome.windows.create({ url });
+    sendResponse({ data: 'ok' });
+  }
 }
 
-async function getContactGmails(request, sendResponse) {
-  if (request.body.contact.emails && request.body.contact.emails.length > 0) {
-    const response = await window.googleClient.getGmails(request.body.contact.emails);
-    sendResponse({ data: response })
-    return;
-  }
-  sendResponse({ data: [] });
-}
-
-function openGmailPage(request, sendResponse) {
-  const url = window.googleClient.getGmailUri(request.body.activity.id);
-  chrome.windows.create({ url });
-  sendResponse({ data: 'ok' });
-}
-
-// Listen message from content and standalong to response
-chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-  if (request.type === 'rc-register-service') {
-    registerService(sendResponse)
-    return true;
-  }
-  if (request.type === 'rc-post-message-request') {
-    if (request.path === '/authorize') {
-      onAuthorize(request.body.authorized);
-      sendResponse({ data: 'ok' });
-    }
-    if (request.path === '/contacts') {
-      onGetContacts(request, sendResponse);
-    }
-    if (request.path === '/conference/invite') {
-      createCalendarEvent(request, sendResponse);
-    }
-    if (request.path === '/activities') {
-      getContactGmails(request, sendResponse);
-    }
-    if (request.path === '/activity') {
-      openGmailPage(request, sendResponse);
-    }
-    if (request.path === '/contacts/search') {
-      onContactSearch(request, sendResponse);
-    }
-    if (request.path === '/contacts/match') {
-      onContactMatch(request, sendResponse);
-    }
-    return true;
-  }
-});
+const background = new Background();
