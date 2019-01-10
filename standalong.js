@@ -1,73 +1,84 @@
 console.log('from standalong.js');
 
-function postMessageToWidget(message) {
-  document.querySelector("#rc-widget-adapter-frame").contentWindow.postMessage(message, '*');
-}
+class StandalongClient {
+  constructor() {
+    this._registered = false;
 
-function responseMessageToWidget(request, response) {
-  postMessageToWidget({
-    type: 'rc-post-message-response',
-    responseId: request.requestId,
-    response,
-  });
-}
-
-function inviteConference(request) {
-  responseMessageToWidget(request, { data: 'ok' });
-}
-
-// Listen message from RingCentral Embeddable and response:
-var registered = false;
-window.addEventListener('message', (e) => {
-  const request = e.data;
-  if (!request || !request.type) {
-    return;
+    this._initWidgetMessageListener();
+    this._initBackgroundMessageListener();
   }
-  console.log(request);
-  if (request.type === 'rc-adapter-pushAdapterState' && !registered) {
-    // To register service
-    chrome.runtime.sendMessage({ type: 'rc-register-service' }, function(response) {
-      postMessageToWidget({
-        type: 'rc-adapter-register-third-party-service',
-        service: response.service,
-      })
-    });
-    return;
-  }
-  chrome.runtime.sendMessage(request, function(response) {
-    console.log('response:', response);
-    if (request.type === 'rc-post-message-request') {
-      if (request.path === '/conference/invite') {
-        responseMessageToWidget(request, { data: 'ok' });
-        if (response.htmlLink) {
-          window.open(response.htmlLink);
-        }
+
+  // Listen message from RingCentral Embeddable and response:
+  _initWidgetMessageListener() {
+    window.addEventListener('message', (e) => {
+      const request = e.data;
+      if (!request || !request.type) {
         return;
       }
-      responseMessageToWidget(request, response)
-    }
-  });
-});
-
-
-// Listen message from background using storage event
-browser.storage.onChanged.addListener(function (changes, namespace) {
-  if (namespace != 'local') {
-    return;
-  }
-  const messageData = changes['__StorageTransportMessageKey'];
-  if (!messageData || !messageData.newValue) {
-    return;
-  }
-  const { setter, value } = messageData.newValue;
-  if (!setter || setter != 'background') {
-    return;
-  }
-  const request = value;
-  if (request.action === 'authorizeStatusChanged') {
-    postMessageToWidget({
-      type: 'rc-adapter-update-authorization-status',
-      authorized: request.authorized,
+      console.log(request);
+      if (request.type === 'rc-adapter-pushAdapterState' && !this._registered) {
+        this._registered = true;
+        // To register service
+        chrome.runtime.sendMessage({ type: 'rc-register-service' }, (response) => {
+          this.postMessageToWidget({
+            type: 'rc-adapter-register-third-party-service',
+            service: response.service,
+          })
+        });
+        return;
+      }
+      // pass widget message to background
+      chrome.runtime.sendMessage(request, (response) => {
+        console.log('response:', response);
+        if (request.type === 'rc-post-message-request') {
+          if (request.path === '/conference/invite') {
+            this.responseMessageToWidget(request, { data: 'ok' });
+            if (response.htmlLink) {
+              window.open(response.htmlLink);
+            }
+            return;
+          }
+          this.responseMessageToWidget(request, response)
+        }
+      });
     });
   }
-});
+
+  _initBackgroundMessageListener() {
+    // Listen message from background using storage event
+    browser.storage.onChanged.addListener((changes, namespace) => {
+      if (namespace != 'local') {
+        return;
+      }
+      const messageData = changes['__StorageTransportMessageKey'];
+      if (!messageData || !messageData.newValue) {
+        return;
+      }
+      const { setter, value } = messageData.newValue;
+      if (!setter || setter != 'background') {
+        return;
+      }
+      const request = value;
+      if (request.action === 'authorizeStatusChanged') {
+        this.postMessageToWidget({
+          type: 'rc-adapter-update-authorization-status',
+          authorized: request.authorized,
+        });
+      }
+    });
+  }
+  
+  postMessageToWidget(message) {
+    document.querySelector("#rc-widget-adapter-frame").contentWindow.postMessage(message, '*');
+  }
+
+  responseMessageToWidget(request, response) {
+    this.postMessageToWidget({
+      type: 'rc-post-message-response',
+      responseId: request.requestId,
+      response,
+    });
+  }
+}
+
+window.client = new StandalongClient();

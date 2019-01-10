@@ -1,30 +1,3 @@
-function isFloatingWindowInjected(url) {
-  if (!url) {
-    return false;
-  }
-  if (url.indexOf('www.google.com/contacts') > -1) {
-    return true;
-  }
-  if (url.indexOf('calendar.google.com') > -1) {
-    return true;
-  }
-  if (url.indexOf('mail.google.com') > -1) {
-    return true;
-  }
-  return false;
-}
-
-async function sendMessageToContentAndStandalong(message) {
-  const key = '__StorageTransportMessageKey';
-  await browser.storage.local.set({
-    [key]: {
-      setter: 'background',
-      value: message,
-    }
-  });
-  await browser.storage.local.remove(key);
-}
-
 class Background {
   constructor() {
     this._googleClient = new window.GoogleClient();
@@ -37,9 +10,9 @@ class Background {
   _addExtensionIconClickedListener() {
     chrome.browserAction.onClicked.addListener((tab) => {
       // open float app window when click icon in office page
-      if (isFloatingWindowInjected(tab && tab.url)) {
+      if (this._isFloatingWindowInjected(tab && tab.url)) {
         // send message to content.js to to open app window.
-        sendMessageToContentAndStandalong({ action: 'openAppWindow' });
+        this.sendMessageToContentAndStandalong({ action: 'openAppWindow' });
         return;
       }
       // open standalong app window when click icon
@@ -58,6 +31,22 @@ class Background {
         });
       }
     });
+  }
+
+  _isFloatingWindowInjected(url) {
+    if (!url) {
+      return false;
+    }
+    if (url.indexOf('www.google.com/contacts') > -1) {
+      return true;
+    }
+    if (url.indexOf('calendar.google.com') > -1) {
+      return true;
+    }
+    if (url.indexOf('mail.google.com') > -1) {
+      return true;
+    }
+    return false;
   }
 
   _addStandalongWindowClosedEvent() {
@@ -103,6 +92,17 @@ class Background {
     });
   }
 
+  async sendMessageToContentAndStandalong(message) {
+    const key = '__StorageTransportMessageKey';
+    await browser.storage.local.set({
+      [key]: {
+        setter: 'background',
+        value: message,
+      }
+    });
+    await browser.storage.local.remove(key);
+  }
+
   async onAuthorize(authorized) {
     if (!authorized) {
       await this._googleClient.authorize();
@@ -114,7 +114,7 @@ class Background {
       this._googleClient.setUserInfo();
       this._googleClient.syncContacts();
     }
-    await sendMessageToContentAndStandalong(
+    await this.sendMessageToContentAndStandalong(
       { action: 'authorizeStatusChanged', authorized: newAuthorized }
     );
   }
