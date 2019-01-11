@@ -10,6 +10,8 @@
 - [x] Integrate Google Calendar
 - [x] Integrate Google Gmail
 - [x] Click to Dial and SMS in google related pages
+- [ ] Desktop Notification
+- [ ] Limit floating window count
 
 ## Releases
 
