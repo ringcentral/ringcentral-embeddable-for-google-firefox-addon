@@ -2,8 +2,6 @@
 
 ![Google Contacts With RingCentral Embeddable](https://user-images.githubusercontent.com/7036536/51007549-e5645380-1582-11e9-88a6-4c9ada1681fc.png)
 
-![Click to Dial in Phone Number](https://user-images.githubusercontent.com/7036536/51007720-94089400-1583-11e9-993e-821927ad8219.png)
-
 ## Features
 
 - [x] Integrate Google feature with Google Authorization
