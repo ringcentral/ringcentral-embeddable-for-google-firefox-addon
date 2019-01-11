@@ -6,12 +6,12 @@
 
 ## Features
 
-[x] Integration Google feature with Google Authorization
-[x] Integration Google Contacts
-[x] Integration Google Directory
-[x] Integration Google Calendar
-[x] Integration Google Gmail
-[x] Click to Dial and SMS in google related pages
+- [x] Integrate Google feature with Google Authorization
+- [x] Integrate Google Contacts
+- [x] Integrate Google Directory
+- [x] Integrate Google Calendar
+- [x] Integrate Google Gmail
+- [x] Click to Dial and SMS in google related pages
 
 ## Releases
 
