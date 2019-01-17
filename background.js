@@ -2,13 +2,16 @@ class Background {
   constructor() {
     this._googleClient = new window.GoogleClient();
     this._standalongWindow = null;
+    this._messagesToStandalong = [];  // message queue of standalong
+    this._widgetTabs = {};
     this._addExtensionIconClickedListener();
     this._addStandalongWindowClosedEvent();
     this._initMessageResponseService();
+    this._initClientConnectedListener();
   }
 
   _addExtensionIconClickedListener() {
-    chrome.browserAction.onClicked.addListener((tab) => {
+    browser.browserAction.onClicked.addListener((tab) => {
       // open float app window when click icon in office page
       if (this._isFloatingWindowInjected(tab && tab.url)) {
         // send message to content.js to to open app window.
@@ -16,21 +19,33 @@ class Background {
         return;
       }
       // open standalong app window when click icon
-      if (!this._standalongWindow) {
-        chrome.windows.create({
-          url: './standalong.html',
-          type: 'popup',
-          width: 300,
-          height: 536
-        }, (wind) => {
-          this._standalongWindow = wind;
-        });
-      } else {
-        chrome.windows.update(this._standalongWindow.id, {
-          focused: true,
-        });
-      }
+      this.openStandalongWindow();
     });
+  }
+
+  _initClientConnectedListener() {
+    browser.runtime.onConnect.addListener((port) => {
+      this._widgetTabs[port.sender.tab.id] = 1;
+      port.onDisconnect.addListener(() => {
+        delete this._widgetTabs[port.sender.tab.id]
+      });
+    });
+  }
+
+  async openStandalongWindow() {
+    if (!this._standalongWindow) {
+      const wind = await browser.windows.create({
+        url: './standalong.html',
+        type: 'popup',
+        width: 300,
+        height: 536
+      });
+      this._standalongWindow = wind;
+    } else {
+      await browser.windows.update(this._standalongWindow.id, {
+        focused: true,
+      });
+    }
   }
 
   _isFloatingWindowInjected(url) {
@@ -38,6 +53,9 @@ class Background {
       return false;
     }
     if (url.indexOf('www.google.com/contacts') > -1) {
+      return true;
+    }
+    if (url.indexOf('contacts.google.com') > -1) {
       return true;
     }
     if (url.indexOf('calendar.google.com') > -1) {
@@ -62,6 +80,10 @@ class Background {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.type === 'rc-register-service') {
         this.registerService(sendResponse)
+        if (request.from === 'standalong') {
+          // send messages to standalong when it opened and inited
+          this._sendMessagesQueueToStandalong();
+        }
         return true;
       }
       if (request.type === 'rc-post-message-request') {
@@ -89,14 +111,57 @@ class Background {
         }
         return true;
       }
+      if (request.type === 'rc-adapter-to-standalong') {
+        this.sendMessagesToStandalong(request.data);
+      }
+      if (request.type === 'rc-adapter-open-standalong') {
+        this.openStandalongWindow();
+      }
+      if (request.type === 'rc-adapter-get-widget-tabs') {
+        sendResponse({ data: this._widgetTabs });
+      }
     });
+  }
+
+  _sendMessagesQueueToStandalong() {
+    if (this._messagesToStandalong.length > 0) {
+      const messages = this._messagesToStandalong;
+      this._messagesToStandalong = [];
+      messages.forEach((message) => {
+        this.sendMessageToStandalong(message);
+      });
+    }
+  }
+
+  async sendMessagesToStandalong(request) {
+    const command = {
+      action: 'messageToWidget',
+      data: request,
+    };
+    if (this._standalongWindow) {
+      this.sendMessageToStandalong(command);
+      return;
+    }
+    this._messagesToStandalong.push(command);
+    await this.openStandalongWindow();
   }
 
   async sendMessageToContentAndStandalong(message) {
     const key = '__StorageTransportMessageKey';
     await browser.storage.local.set({
       [key]: {
-        setter: 'background',
+        setter: 'backgroundBroadcast',
+        value: message,
+      }
+    });
+    await browser.storage.local.remove(key);
+  }
+
+  async sendMessageToStandalong(message) {
+    const key = '__StorageTransportMessageKey';
+    await browser.storage.local.set({
+      [key]: {
+        setter: 'backgroundToStandalong',
         value: message,
       }
     });

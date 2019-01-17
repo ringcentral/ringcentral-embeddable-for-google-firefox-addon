@@ -3,13 +3,23 @@ console.log('import RingCentral Embeddable Voice to web page');
 class ContentClient {
   constructor() {
     this._registered = false;
+    this._widgetInjected = false;
     this._injectWidget();
     this._initWidgetMessageListener();
     this._initBackgroundMessageListener();
     this._initC2DInject();
   }
 
-  _injectWidget() {
+  async _injectWidget() {
+    if (this._widgetInjected) {
+      return;
+    }
+    const response = await browser.runtime.sendMessage({ type: 'rc-adapter-get-widget-tabs' });
+    if (Object.keys(response.data).length > 3) {
+      return;
+    }
+    const port = await browser.runtime.connect(); // register current content into background
+    this._widgetInjected = true;
     (function() {
       var rcs = document.createElement("script");
       rcs.src = "https://ringcentral.github.io/ringcentral-embeddable/adapter.js";
@@ -25,7 +35,6 @@ class ContentClient {
       if (!request || !request.type) {
         return;
       }
-      console.log(request);
       if (request.type === 'rc-adapter-pushAdapterState' && !this._registered) {
         this._registered = true;
         // To get service info from background and register service
@@ -66,12 +75,18 @@ class ContentClient {
         return;
       }
       const { setter, value } = messageData.newValue;
-      if (!setter || setter != 'background') {
+      if (!setter || setter !== 'backgroundBroadcast') {
         return;
       }
       const request = value;
       if (request.action === 'openAppWindow') {
-        this.openFloatingWindow();
+        if (this._widgetInjected) {
+          this.openFloatingWindow();
+        } else {
+          chrome.runtime.sendMessage({
+            type: 'rc-adapter-open-standalong',
+          });
+        }
       }
       if (request.action === 'authorizeStatusChanged') {
         this.postMessageToWidget({
@@ -85,19 +100,35 @@ class ContentClient {
   _initC2DInject() {
     this._clickToDialInject = new window.ClickToDialInject({
       onCallClick: (phoneNumber) => {
-        this.openFloatingWindow();
-        this.postMessageToWidget({
+        const message = {
           type: 'rc-adapter-new-call',
           phoneNumber,
           toCall: true,
-        });
+        };
+        if (!this._widgetInjected) {
+          chrome.runtime.sendMessage({
+            type: 'rc-adapter-to-standalong',
+            data: message,
+          });
+          return;
+        }
+        this.openFloatingWindow();
+        this.postMessageToWidget(message);
       },
       onSmsClick: (phoneNumber) => {
-        this.openFloatingWindow();
-        this.postMessageToWidget({
+        const message = {
           type: 'rc-adapter-new-sms',
           phoneNumber,
-        });
+        };
+        if (!this._widgetInjected) {
+          chrome.runtime.sendMessage({
+            type: 'rc-adapter-to-standalong',
+            data: message,
+          });
+          return;
+        }
+        this.openFloatingWindow();
+        this.postMessageToWidget(message);
       },
     });
   }

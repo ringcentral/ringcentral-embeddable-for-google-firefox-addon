@@ -19,7 +19,7 @@ class StandalongClient {
       if (request.type === 'rc-adapter-pushAdapterState' && !this._registered) {
         this._registered = true;
         // To register service
-        chrome.runtime.sendMessage({ type: 'rc-register-service' }, (response) => {
+        chrome.runtime.sendMessage({ type: 'rc-register-service', from: 'standalong' }, (response) => {
           this.postMessageToWidget({
             type: 'rc-adapter-register-third-party-service',
             service: response.service,
@@ -55,7 +55,7 @@ class StandalongClient {
         return;
       }
       const { setter, value } = messageData.newValue;
-      if (!setter || setter != 'background') {
+      if (!setter || (setter !== 'backgroundBroadcast' && setter !== 'backgroundToStandalong')) {
         return;
       }
       const request = value;
@@ -64,6 +64,9 @@ class StandalongClient {
           type: 'rc-adapter-update-authorization-status',
           authorized: request.authorized,
         });
+      }
+      if (request.action === 'messageToWidget') {
+        this.postMessageToWidget(request.data);
       }
     });
   }
