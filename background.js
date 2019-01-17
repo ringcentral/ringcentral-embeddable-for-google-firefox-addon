@@ -4,10 +4,12 @@ class Background {
     this._standalongWindow = null;
     this._messagesToStandalong = [];  // message queue of standalong
     this._widgetTabs = {};
+    this._notificationIds = {};
     this._addExtensionIconClickedListener();
     this._addStandalongWindowClosedEvent();
     this._initMessageResponseService();
     this._initClientConnectedListener();
+    this._initNotificationListener();
   }
 
   _addExtensionIconClickedListener() {
@@ -120,6 +122,10 @@ class Background {
       if (request.type === 'rc-adapter-get-widget-tabs') {
         sendResponse({ data: this._widgetTabs });
       }
+      if (request.type === 'rc-active-call-notify') {
+        this.createNoticiation(request.call);
+      }
+      console.log(request);
     });
   }
 
@@ -166,6 +172,42 @@ class Background {
       }
     });
     await browser.storage.local.remove(key);
+  }
+
+  async createNoticiation(call) {
+    if (call.telephonyStatus !== 'Ringing' || call.direction !== 'Inbound') {
+      return;
+    }
+    if (this._notificationIds[call.sessionId]) {
+      return;
+    }
+    this._notificationIds[call.sessionId] = Date.now();
+    browser.notifications.create(
+      call.sessionId,
+      {
+        type: 'basic',
+        title: 'New Call',
+        message: `Call from: ${call.from && call.from.phoneNumber}`
+      }
+    )
+  }
+
+  _initNotificationListener() {
+    browser.notifications.onClosed.addListener((notificationId) => {
+      delete this._notificationIds[notificationId];
+    });
+    browser.notifications.onClicked.addListener((notificationId) => {
+      if (this._standalongWindow) {
+        this.openStandalongWindow();
+        return;
+      }
+      delete this._notificationIds[notificationId];
+      if (Object.keys(this._widgetTabs).length > 0) {
+        const lastTabId = Object.keys(this._widgetTabs)[Object.keys(this._widgetTabs).length - 1];
+        browser.tabs.update(parseInt(lastTabId), { active: true });
+        return;
+      }
+    });
   }
 
   async onAuthorize(authorized) {

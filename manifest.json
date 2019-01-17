@@ -9,6 +9,7 @@
     "activeTab",
     "tabs",
     "identity",
+    "notifications",
     "unlimitedStorage",
     "https://*.google.com/*"
   ],
