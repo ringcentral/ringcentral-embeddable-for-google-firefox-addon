@@ -1,7 +1,7 @@
 {
   "name": "RingCentral Embeddable for Google",
   "description": "RingCentral Embeddable For Google with Firefox extension",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "permissions": [
     "http://*/",
     "https://*/",
