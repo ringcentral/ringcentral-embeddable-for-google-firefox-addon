@@ -16,13 +16,13 @@
 
 ## Releases
 
-Please get all releases in [Releases page](https://github.com/embbnux/ringcentral-embeddable-for-google-firefox-addon/releases)
+Please get all releases in [Releases page](https://github.com/ringcentral/ringcentral-embeddable-for-google-firefox-addon/releases)
 
 
 ## Development
 
 ```
-git clone https://github.com/embbnux/ringcentral-embeddable-for-google-firefox-addon.git
+git clone https://github.com/ringcentral/ringcentral-embeddable-for-google-firefox-addon.git
 ```
 
 1. Add google client id in googleClient file. Need  to add `People, Google Plus, Gmail. Calendar, and Admin SDK ` scope in google developer console. `Admin SDK` is for directory api.
